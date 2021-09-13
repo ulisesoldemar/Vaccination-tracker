@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "/home/ulises/.local/share/virtualenvs/vacc_tracker-dfZWnCGj/lib/python3.9/site-packages/"
+    ]
+}
