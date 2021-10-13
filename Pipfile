@@ -9,6 +9,7 @@ sqlalchemy = "*"
 pandas = "*"
 plotly = "*"
 prefect = "*"
+dash = "*"
 
 [dev-packages]
 

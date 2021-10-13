@@ -1,20 +1,21 @@
 from json import loads
 from requests import get
+
 from sqlalchemy import create_engine
 from sqlalchemy.types import Float, DateTime
+
 from datetime import datetime, timedelta
 import pandas as pd
+
+import io
+from base64 import b64encode
+
 import plotly.express as px
+import dash
+from dash import dcc
+from dash import html
 
 
-from prefect import task, Flow
-
-from prefect.schedules import IntervalSchedule
-from prefect.executors import DaskExecutor
-
-
-# Extract
-@task(max_retries=3, retry_delay=timedelta(seconds=5))
 def extract_data():
     url = 'https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/latest/owid-covid-latest.json'
     print('Downloading from {}'.format(url))
@@ -23,8 +24,6 @@ def extract_data():
     return raw_data
 
 
-# Transform
-@task
 def get_global_vaccinated_percentage(ref_data):
     countries = dict()
     for country in ref_data:
@@ -37,8 +36,6 @@ def get_global_vaccinated_percentage(ref_data):
     return df
 
 
-# Load
-@task
 def store_percentages(percentages: pd.DataFrame):
     df = percentages.copy(deep=True)
     timestamp = datetime.utcnow() + timedelta(seconds=1)
@@ -55,16 +52,15 @@ def store_percentages(percentages: pd.DataFrame):
                          'fully_vaccinated': Float()})
 
 
-@task
 def create_chart(percentages: pd.DataFrame):
+    buffer = io.StringIO()
     fig = px.bar(percentages, labels={
         'index': 'Country',
         'value': 'Vaccines (millions)',
     }, title='Vaccination Rate Per Country')
-    fig.show()
+    return fig
 
 
-# Helpers
 def extract_data_by_country(iso_code, ref_data, **item):
     if not item:
         return ref_data[iso_code]
@@ -89,18 +85,29 @@ def get_vaccinated_percentage_by_country(raw_region_data):
 
 
 def main():
-    extract_data_schedule = IntervalSchedule(
-        start_date=datetime.utcnow() + timedelta(seconds=1),
-        interval=timedelta(hours=12)
-    )
+    buffer = io.StringIO()
 
-    with Flow('Vacc Flow', schedule=extract_data_schedule) as etl_flow:
-        raw_data = extract_data()
-        vacc_percentages = get_global_vaccinated_percentage(raw_data)
-        store_percentages(vacc_percentages)
-        create_chart(vacc_percentages)
+    raw_data = extract_data()
+    vacc_percentages = get_global_vaccinated_percentage(raw_data)
+    store_percentages(vacc_percentages)
 
-    etl_flow.run(executor=DaskExecutor())
+    fig = create_chart(vacc_percentages)
+    fig.write_html(buffer)
+    html_bytes = buffer.getvalue().encode()
+    encoded = b64encode(html_bytes).decode()
+
+    app = dash.Dash(__name__)
+    app.layout = html.Div([
+        dcc.Graph(id="graph", figure=fig),
+        html.A(
+            html.Button("Download HTML"),
+            id="download",
+            href="data:text/html;base64," + encoded,
+            download="plotly_graph.html"
+        )
+    ])
+
+    app.run_server(debug=True, port=8080, host='0.0.0.0')
 
 
 if __name__ == '__main__':
